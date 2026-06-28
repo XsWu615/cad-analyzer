@@ -2,9 +2,10 @@ from PySide6.QtWidgets import (
     QMainWindow, QMenuBar, QToolBar, QStatusBar,
     QFileDialog, QMessageBox, QWidget, QVBoxLayout,
     QHBoxLayout, QSplitter, QLabel, QDockWidget,
+    QDialog, QDialogButtonBox, QPushButton,
 )
-from PySide6.QtCore import Qt, QSettings
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import Qt, QSettings, QUrl
+from PySide6.QtGui import QAction, QKeySequence, QDesktopServices
 
 from cad_parser import CADParser
 from model_builder import ModelBuilder
@@ -14,6 +15,7 @@ from dxf_preview import DXFPreviewWidget
 from gl_widget import GLWidget
 from layer_panel import LayerPanel
 from stats_panel import StatsPanel
+from dwg_converter import DWGConverter
 
 
 class MainWindow(QMainWindow):
@@ -26,6 +28,7 @@ class MainWindow(QMainWindow):
         self._builder = ModelBuilder()
         self._counter = PartCounter()
         self._exporter = Exporter()
+        self._dwg_converter = DWGConverter()
 
         self._current_dxf = None
         self._layer_meshes = {}
@@ -143,12 +146,77 @@ class MainWindow(QMainWindow):
 
     def _on_open(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "打开DXF图纸", "",
-            "DXF Files (*.dxf);;All Files (*.*)"
+            self, "打开CAD图纸", "",
+            "CAD Files (*.dxf *.dwg);;DXF Files (*.dxf);;DWG Files (*.dwg);;All Files (*.*)"
         )
         if not path:
             return
 
+        # DWG detection → guide user to convert first
+        if path.lower().endswith('.dwg'):
+            self._handle_dwg(path)
+            return
+
+        self._load_dxf(path)
+
+    def _handle_dwg(self, dwg_path):
+        """Show DWG guidance dialog with conversion options."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("DWG文件检测")
+        dlg.setMinimumWidth(520)
+
+        layout = QVBoxLayout(dlg)
+        layout.setSpacing(12)
+
+        info = QLabel(
+            f"<h3>检测到 DWG 格式文件</h3>"
+            f"<p><b>文件:</b> {dwg_path}</p>"
+            f"<p>DWG 是 AutoCAD 私有二进制格式，本软件无法直接解析。</p>"
+            f"<p><b>解决方案：</b>使用 Autodesk 官方免费的 "
+            f"<a href='https://www.opendesign.com/guestfiles/oda_file_converter'>ODA File Converter</a> "
+            f"将 DWG 转换为 DXF，再导入本软件。</p>"
+            f"<p style='color:#888;'>一次转换所有 DWG 文件，后续直接打开 DXF 即可。</p>"
+        )
+        info.setWordWrap(True)
+        info.setOpenExternalLinks(True)
+        layout.addWidget(info)
+
+        # ODAFileConverter detection
+        oda_path = self._dwg_converter.find_oda_converter()
+        oda_label = QLabel()
+        if oda_path:
+            oda_label.setText(f"ODAFileConverter 已检测到:<br><code>{oda_path}</code>")
+            oda_label.setStyleSheet("color: #4ecdc4;")
+        else:
+            oda_label.setText("未检测到 ODA File Converter 安装。\n请下载后安装，或将 DWG 文件用其他工具转为 DXF。")
+            oda_label.setStyleSheet("color: #ff6b6b;")
+        oda_label.setWordWrap(True)
+        layout.addWidget(oda_label)
+
+        # buttons
+        btn_layout = QHBoxLayout()
+
+        if oda_path:
+            btn_run = QPushButton("启动 ODA File Converter")
+            btn_run.clicked.connect(lambda: self._dwg_converter.launch_oda(oda_path))
+            btn_layout.addWidget(btn_run)
+
+        btn_download = QPushButton("下载 ODA File Converter")
+        btn_download.clicked.connect(lambda: QDesktopServices.openUrl(
+            QUrl("https://www.opendesign.com/guestfiles/oda_file_converter")
+        ))
+        btn_layout.addWidget(btn_download)
+
+        btn_layout.addStretch()
+
+        dlg_buttons = QDialogButtonBox(QDialogButtonBox.Ok)
+        dlg_buttons.accepted.connect(dlg.accept)
+        btn_layout.addWidget(dlg_buttons)
+
+        layout.addLayout(btn_layout)
+        dlg.exec()
+
+    def _load_dxf(self, path):
         try:
             self._status_label.setText(f"解析中: {path}")
             self._current_dxf = self._parser.parse(path)
