@@ -1,0 +1,106 @@
+QMainWindow {
+    background-color: #2b2b2b;
+}
+QMenuBar {
+    background-color: #3c3c3c;
+    color: #e0e0e0;
+    padding: 2px;
+}
+QMenuBar::item:selected {
+    background-color: #505050;
+}
+QMenu {
+    background-color: #3c3c3c;
+    color: #e0e0e0;
+}
+QMenu::item:selected {
+    background-color: #0078d4;
+}
+QToolBar {
+    background-color: #353535;
+    border: none;
+    padding: 2px;
+    spacing: 4px;
+}
+QToolButton {
+    color: #e0e0e0;
+    padding: 6px 12px;
+    border-radius: 4px;
+}
+QToolButton:hover {
+    background-color: #505050;
+}
+QToolButton:pressed {
+    background-color: #0078d4;
+}
+QStatusBar {
+    background-color: #007acc;
+    color: white;
+}
+QSplitter::handle {
+    background-color: #555;
+    width: 2px;
+}
+QTableWidget, QTreeWidget, QListWidget {
+    background-color: #1e1e1e;
+    color: #e0e0e0;
+    alternate-background-color: #2a2a2a;
+    gridline-color: #444;
+    border: 1px solid #444;
+    selection-background-color: #0078d4;
+}
+QHeaderView::section {
+    background-color: #3c3c3c;
+    color: #e0e0e0;
+    padding: 4px;
+    border: 1px solid #444;
+}
+QLabel {
+    color: #e0e0e0;
+}
+QGroupBox {
+    color: #e0e0e0;
+    border: 1px solid #555;
+    border-radius: 4px;
+    margin-top: 8px;
+    padding-top: 8px;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+}
+QPushButton {
+    background-color: #0078d4;
+    color: white;
+    padding: 6px 16px;
+    border: none;
+    border-radius: 4px;
+}
+QPushButton:hover {
+    background-color: #1e90ff;
+}
+QPushButton:pressed {
+    background-color: #005fa3;
+}
+QDoubleSpinBox, QSpinBox {
+    background-color: #3c3c3c;
+    color: #e0e0e0;
+    border: 1px solid #555;
+    padding: 3px;
+    border-radius: 3px;
+}
+QTabWidget::pane {
+    background-color: #1e1e1e;
+    border: 1px solid #444;
+}
+QTabBar::tab {
+    background-color: #3c3c3c;
+    color: #e0e0e0;
+    padding: 6px 16px;
+    border: 1px solid #444;
+    border-bottom: none;
+}
+QTabBar::tab:selected {
+    background-color: #1e1e1e;
+    border-bottom: 2px solid #0078d4;
+}
