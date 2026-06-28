@@ -26,6 +26,7 @@ a = Analysis(
         *pv_datas,
         *mpl_datas,
         ('style.qss', '.'),
+        ('icon.ico', '.'),
     ],
     hiddenimports=[
         *vtk_hidden,

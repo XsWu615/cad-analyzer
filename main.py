@@ -10,7 +10,14 @@ matplotlib.rcParams['axes.unicode_minus'] = False
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from main_window import MainWindow
+
+
+def _base_dir():
+    if getattr(sys, 'frozen', False):
+        return sys._MEIPASS
+    return os.path.dirname(os.path.abspath(__file__))
 
 
 def main():
@@ -18,8 +25,15 @@ def main():
     app.setApplicationName("CAD Analyzer")
     app.setOrganizationName("CADTools")
 
-    with open(os.path.join(os.path.dirname(__file__), "style.qss"), encoding="utf-8") as f:
-        app.setStyleSheet(f.read())
+    # Window icon (title bar + taskbar)
+    icon_path = os.path.join(_base_dir(), "icon.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+
+    style_path = os.path.join(_base_dir(), "style.qss")
+    if os.path.exists(style_path):
+        with open(style_path, encoding="utf-8") as f:
+            app.setStyleSheet(f.read())
 
     window = MainWindow()
     window.resize(1400, 900)
