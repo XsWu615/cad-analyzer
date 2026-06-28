@@ -98,11 +98,32 @@ result.paste(img, mask=mask)
 
 result.save('D:/cad-analyzer/icon.png')
 
-# Multi-res ICO
-sizes = [16, 24, 32, 48, 64, 128, 256]
-ico_imgs = [result.resize((s, s), Image.LANCZOS) for s in sizes]
-ico_imgs[0].save('D:/cad-analyzer/icon.ico', format='ICO',
-                 sizes=[(s, s) for s in sizes], append_images=ico_imgs[1:])
+# Multi-res ICO — save each size to temp PNGs, combine with PIL
+import io, struct
+sizes = [256, 128, 64, 48, 32, 24, 16]
+png_buffers = []
+for s in sizes:
+    frame = result.resize((s, s), Image.LANCZOS)
+    buf = io.BytesIO()
+    frame.save(buf, format='PNG')
+    png_buffers.append(buf.getvalue())
+
+# Write ICO manually for reliable multi-res support
+with open('D:/cad-analyzer/icon.ico', 'wb') as f:
+    # ICO header
+    f.write(struct.pack('<HHH', 0, 1, len(sizes)))  # reserved, type=ico, count
+    # Image directory entries
+    offset = 6 + 16 * len(sizes)  # header + directory
+    entries = []
+    for s, png_data in zip(sizes, png_buffers):
+        data_len = len(png_data)
+        entries.append((s if s < 256 else 0, s if s < 256 else 0, 0, 0, 32, data_len, offset))
+        offset += data_len
+    for w, h, colors, planes, bpp, data_len, off in entries:
+        f.write(struct.pack('<BBBBHHII', w, h, colors, planes, 1, bpp, data_len, off))
+    # Image data
+    for png_data in png_buffers:
+        f.write(png_data)
 
 print("Icon saved: D:/cad-analyzer/icon.png (256x256)")
 print("Icon saved: D:/cad-analyzer/icon.ico (multi-res)")
