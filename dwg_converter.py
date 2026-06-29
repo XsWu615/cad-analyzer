@@ -55,9 +55,12 @@ class DWGConverter:
         # Method 1: Bundled WASM via Node.js
         node = self._find_node()
         if node:
-            result = self._convert_wasm(dwg_path, node)
+            result, error = self._convert_wasm(dwg_path, node)
             if result:
                 return result
+            if error:
+                self._last_error = error
+                return None
 
         # Method 2: ODA File Converter (if installed)
         oda = self._find_oda()
@@ -67,6 +70,10 @@ class DWGConverter:
                 return result
 
         return None
+
+    @property
+    def last_error(self) -> str:
+        return getattr(self, '_last_error', '未知错误')
 
     def get_status(self) -> str:
         """Human-readable status of conversion capabilities."""
@@ -84,33 +91,46 @@ class DWGConverter:
 
     # --- internal ---
 
-    def _convert_wasm(self, dwg_path: str, node_exe: str) -> str | None:
+    def _convert_wasm(self, dwg_path: str, node_exe: str):
+        """Returns (dxf_path, None) on success, (None, error_msg) on failure."""
         wasm_dir = self._wasm_dir()
         cli_js = os.path.join(wasm_dir, 'dwg2dxf_cli.mjs')
         wasm_file = os.path.join(wasm_dir, 'wasm_bundle', 'libredwg-web.wasm')
         js_file = os.path.join(wasm_dir, 'wasm_bundle', 'libredwg-web.js')
 
-        if not all(os.path.isfile(f) for f in [cli_js, wasm_file, js_file]):
-            return None
+        missing = [f for f in [cli_js, wasm_file, js_file] if not os.path.isfile(f)]
+        if missing:
+            return None, f"缺少文件: {missing}"
 
-        input_dir = os.path.dirname(dwg_path)
+        output_dir = tempfile.mkdtemp(prefix="cad_dwg_")
         base = os.path.splitext(os.path.basename(dwg_path))[0]
-        output_path = os.path.join(input_dir, base + '.dxf')
+        output_path = os.path.join(output_dir, base + '.dxf')
 
         try:
             env = os.environ.copy()
             env['NODE_PATH'] = wasm_dir
             result = subprocess.run(
                 [node_exe, cli_js, dwg_path, output_path],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, timeout=120,
                 cwd=wasm_dir, env=env,
                 creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
             )
-            if result.returncode == 0 and os.path.isfile(output_path):
-                return output_path
-        except Exception:
-            pass
-        return None
+            if result.returncode != 0:
+                err = ""
+                if result.stderr:
+                    err = result.stderr.decode('utf-8', errors='replace').strip()
+                if not err and result.stdout:
+                    err = result.stdout.decode('utf-8', errors='replace').strip()
+                return None, f"Node.js返回码{result.returncode}: {err[:200]}"
+            if not os.path.isfile(output_path):
+                return None, f"输出文件未生成: {output_path}"
+            return output_path, None
+        except subprocess.TimeoutExpired:
+            return None, "转换超时(120秒)"
+        except FileNotFoundError:
+            return None, f"找不到Node.js: {node_exe}"
+        except Exception as e:
+            return None, f"异常: {type(e).__name__}: {e}"
 
     def _find_oda(self) -> str | None:
         for path in self.ODA_PATHS:

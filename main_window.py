@@ -253,8 +253,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, '_dwg_progress'):
             self._dwg_progress.accept()
         if result is None or isinstance(result, Exception):
+            detail = self._dwg_converter.last_error if hasattr(self._dwg_converter, 'last_error') else str(result)
             QMessageBox.warning(self, "DWG转换失败",
-                f"自动转换未成功。\n\n请确保已安装 Node.js。\n错误: {result}")
+                f"DWG→DXF转换未成功。\n\n{detail}")
             self._status("DWG转换失败")
             return
         self._import_dxf(result)
