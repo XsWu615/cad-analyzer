@@ -46,15 +46,10 @@ class DXFPreviewWidget(QWidget):
             for e in entities:
                 self._draw_entity(e, color)
 
-        # legend
-        patches = []
-        for layer in data.layers:
-            color = layer_colors.get(layer, '#ffffff')
-            patches.append(mpatches.Patch(color=color, label=layer))
-        if patches:
-            self._ax.legend(handles=patches, loc='upper right',
-                          fontsize=7, facecolor='#333', edgecolor='#555',
-                          labelcolor='#ccc')
+        # Too many layers for legend — show count as text
+        self._ax.text(0.99, 0.99, f"{len(data.layers)} 层",
+                    transform=self._ax.transAxes, color='#888',
+                    fontsize=8, ha='right', va='top')
 
         if data.bounds != (0, 0, 0, 0):
             margin = max(data.bounds[2] - data.bounds[0], data.bounds[3] - data.bounds[1]) * 0.05

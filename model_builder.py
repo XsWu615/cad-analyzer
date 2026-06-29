@@ -180,13 +180,26 @@ class ModelBuilder:
         except Exception:
             return None
 
-    def _extrude_polygon(self, poly: Polygon, thickness: float) -> Optional[trimesh.Trimesh]:
-        """Extrude a 2D polygon into a 3D mesh."""
+    def _extrude_polygon(self, poly, thickness: float) -> Optional[trimesh.Trimesh]:
+        """Extrude a 2D polygon (or MultiPolygon) into a 3D mesh."""
+        from shapely.geometry import MultiPolygon
+
+        if isinstance(poly, MultiPolygon):
+            meshes = []
+            for geom in poly.geoms:
+                m = self._extrude_polygon(geom, thickness)
+                if m is not None:
+                    meshes.append(m)
+            if not meshes:
+                return None
+            if len(meshes) == 1:
+                return meshes[0]
+            return trimesh.util.concatenate(meshes)
+
         if poly.is_empty or poly.area < 1e-9:
             return None
 
-        # triangulate the polygon
-        exterior = np.array(poly.exterior.coords[:-1])  # remove duplicate last point
+        exterior = np.array(poly.exterior.coords[:-1])
         if len(exterior) < 3:
             return None
 
