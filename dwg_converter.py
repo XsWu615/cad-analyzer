@@ -87,8 +87,8 @@ class DWGConverter:
     def _convert_wasm(self, dwg_path: str, node_exe: str) -> str | None:
         wasm_dir = self._wasm_dir()
         cli_js = os.path.join(wasm_dir, 'dwg2dxf_cli.mjs')
-        wasm_file = os.path.join(wasm_dir, 'dwg2dxf.wasm')
-        js_file = os.path.join(wasm_dir, 'dwg2dxf_wasm.mjs')
+        wasm_file = os.path.join(wasm_dir, 'wasm_bundle', 'libredwg-web.wasm')
+        js_file = os.path.join(wasm_dir, 'wasm_bundle', 'libredwg-web.js')
 
         if not all(os.path.isfile(f) for f in [cli_js, wasm_file, js_file]):
             return None
