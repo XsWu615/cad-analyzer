@@ -19,7 +19,7 @@ class ProgressDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumWidth(420)
-        self.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleLabel)
+        self.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint)
         self._cancelled = False
 
         layout = QVBoxLayout(self)

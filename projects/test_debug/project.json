@@ -1,0 +1,16 @@
+{
+  "name": "test_debug",
+  "created": "2026-06-30 00:48:17",
+  "modified": "2026-06-30 00:48:30",
+  "drawings": [
+    {
+      "name": "宏逸 1#综合楼_25.12.19_t3",
+      "dxf_path": "D:\\cad-analyzer\\projects\\test_debug\\drawings\\宏逸 1#综合楼_25.12.19_t3.dxf",
+      "layer_count": 159,
+      "entity_count": 16094,
+      "component_count": 0,
+      "import_time": "2026-06-30 00:48:30"
+    }
+  ],
+  "storage_root": "D:\\cad-analyzer\\projects"
+}
