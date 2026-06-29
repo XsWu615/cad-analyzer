@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QSplitter, QLabel, QDockWidget,
     QDialog, QDialogButtonBox, QPushButton,
 )
-from PySide6.QtCore import Qt, QSettings, QUrl, QTimer
+from PySide6.QtCore import Qt, QSettings, QUrl, QTimer, QThread, Signal, QObject
 from PySide6.QtGui import QAction, QKeySequence, QDesktopServices
 
 from cad_parser import CADParser
@@ -18,6 +18,50 @@ from stats_panel import StatsPanel
 from dwg_converter import DWGConverter
 from pdf_importer import PDFImporter
 from translator_util import TextTranslator
+
+
+class _ConvertWorker(QObject):
+    """Runs DWG→DXF conversion in background thread to avoid GUI freeze."""
+    finished = Signal(object)  # str (dxf_path) or Exception
+
+    def __init__(self, converter, dwg_path):
+        super().__init__()
+        self._converter = converter
+        self._dwg_path = dwg_path
+
+    def run(self):
+        try:
+            result = self._converter.auto_convert(self._dwg_path)
+            self.finished.emit(result)
+        except Exception as e:
+            self.finished.emit(e)
+
+
+class _PDFWorker(QObject):
+    """Runs PDF import in background thread."""
+    finished = Signal(object)  # str (tmp_dxf_path) or Exception
+
+    def __init__(self, importer, pdf_path):
+        super().__init__()
+        self._importer = importer
+        self._pdf_path = pdf_path
+
+    def run(self):
+        try:
+            import tempfile
+            pdf_data = self._importer.extract(self._pdf_path)
+            if not pdf_data.layers or not any(
+                pdf_data.entities.get(ly) for ly in pdf_data.layers
+            ):
+                self.finished.emit(ValueError("no_vector"))
+                return
+
+            with tempfile.NamedTemporaryFile(suffix='.dxf', delete=False) as f:
+                tmp_dxf = f.name
+            self._importer.export_dxf(pdf_data, tmp_dxf)
+            self.finished.emit(tmp_dxf)
+        except Exception as e:
+            self.finished.emit(e)
 
 
 class MainWindow(QMainWindow):
@@ -168,90 +212,83 @@ class MainWindow(QMainWindow):
             return
 
     def _open_pdf(self, pdf_path):
-        """Import PDF, translate text, convert to DXF for pipeline."""
-        try:
-            self._status_label.setText(f"导入PDF矢量图形: {pdf_path}")
-            QTimer.singleShot(50, lambda: self._do_pdf_import(pdf_path))
-        except Exception as e:
-            QMessageBox.critical(self, "PDF导入失败", str(e))
+        self._status_label.setText(f"导入PDF矢量图形: {pdf_path}")
+        self._pdf_worker = _PDFWorker(self._pdf_importer, pdf_path)
+        self._pdf_thread = QThread()
+        self._pdf_worker.moveToThread(self._pdf_thread)
+        self._pdf_thread.started.connect(self._pdf_worker.run)
+        self._pdf_worker.finished.connect(self._on_pdf_done)
+        self._pdf_worker.finished.connect(self._pdf_thread.quit)
+        self._pdf_thread.start()
 
-    def _do_pdf_import(self, pdf_path):
-        try:
-            pdf_data = self._pdf_importer.extract(pdf_path)
-            if not pdf_data.layers or not any(
-                pdf_data.entities.get(ly) for ly in pdf_data.layers
-            ):
+    def _on_pdf_done(self, result):
+        if isinstance(result, Exception):
+            if str(result) == "no_vector":
                 QMessageBox.warning(
                     self, "PDF无矢量数据",
-                    "该PDF未检测到矢量线条。\n"
-                    "可能原因：\n"
-                    "  - PDF是扫描图片（非CAD导出）\n"
-                    "  - 矢量内容被栅格化\n\n"
-                    "请用CAD软件导出为DXF后再导入。"
+                    "该PDF未检测到矢量线条，可能是扫描图片。\n请用CAD软件导出DXF后再导入。"
                 )
                 self._status_label.setText("PDF无矢量数据")
-                return
-
-            # Export to temp DXF
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix='.dxf', delete=False) as f:
-                tmp_dxf = f.name
-            self._pdf_importer.export_dxf(pdf_data, tmp_dxf)
-
-            self._status_label.setText(
-                f"PDF已导入: {pdf_data.page_count}页, {len(pdf_data.layers)}层 - 翻译中..."
-            )
-
-            # Load into pipeline
-            self._load_dxf(tmp_dxf)
-
-            # Translate text annotations
-            self._translate_imported_text()
-
-            # cleanup temp
-            import os
-            try:
-                os.unlink(tmp_dxf)
-            except Exception:
-                pass
-
-            self._status_label.setText(
-                f"PDF已导入: {pdf_path} | 图层: {len(self._current_dxf.layers) if self._current_dxf else 0}"
-            )
-        except Exception as e:
-            QMessageBox.critical(self, "PDF导入失败", str(e))
-            self._status_label.setText("PDF导入失败")
-
-    def _open_dwg(self, dwg_path):
-        """Try silent ODA conversion, fall back to guidance dialog."""
-        self._status_label.setText("检测DWG，尝试自动转换...")
-        QTimer.singleShot(50, lambda: self._do_dwg_convert(dwg_path))
-
-    def _do_dwg_convert(self, dwg_path):
-        # Try auto-convert via ODA
-        dxf_path = self._dwg_converter.auto_convert(dwg_path)
-        if dxf_path:
-            self._status_label.setText(f"DWG已自动转换为DXF: {dxf_path}")
-            self._load_dxf(dxf_path)
-            self._translate_imported_text()
+            else:
+                QMessageBox.critical(self, "PDF导入失败", str(result))
+                self._status_label.setText("PDF导入失败")
             return
 
-        # ODA not found — show guidance dialog
-        self._show_dwg_dialog(dwg_path)
+        self._status_label.setText("PDF已导入 - 翻译中...")
+        self._load_dxf(result)
+        self._translate_imported_text()
+        try:
+            import os
+            os.unlink(result)
+        except Exception:
+            pass
+        self._status_label.setText(f"PDF已导入 | 图层: {len(self._current_dxf.layers) if self._current_dxf else 0}")
 
-    def _show_dwg_dialog(self, dwg_path):
+    def _open_dwg(self, dwg_path):
+        self._pending_dwg = dwg_path
+        self._status_label.setText("DWG转换中，请稍候...")
+        self._dwg_worker = _ConvertWorker(self._dwg_converter, dwg_path)
+        self._dwg_thread = QThread()
+        self._dwg_worker.moveToThread(self._dwg_thread)
+        self._dwg_thread.started.connect(self._dwg_worker.run)
+        self._dwg_worker.finished.connect(self._on_dwg_done)
+        self._dwg_worker.finished.connect(self._dwg_thread.quit)
+        self._dwg_thread.start()
+
+    def _on_dwg_done(self, result):
+        if isinstance(result, Exception):
+            self._status_label.setText(f"DWG转换失败: {result}")
+            self._show_dwg_dialog()
+            return
+
+        if result is None:
+            self._show_dwg_dialog()
+            return
+
+        dxf_path = result
+        self._status_label.setText(f"DWG已转换为DXF: {dxf_path}")
+        self._load_dxf(dxf_path)
+        self._translate_imported_text()
+
+    def _show_dwg_dialog(self):
+        dwg_path = getattr(self, '_pending_dwg', '')
         dlg = QDialog(self)
-        dlg.setWindowTitle("DWG转换 - 需要ODA File Converter")
+        dlg.setWindowTitle("DWG转换 - 需要安装 Node.js")
         dlg.setMinimumWidth(520)
 
         layout = QVBoxLayout(dlg)
         layout.setSpacing(12)
 
         info = QLabel(
-            f"<h3>DWG 自动转换失败</h3>"
+            f"<h3>DWG 本地转换暂不可用</h3>"
             f"<p><b>文件:</b> {dwg_path}</p>"
-            f"<p>DWG 是 AutoCAD 私有格式。需要安装 ODA File Converter（免费）才能自动转换。</p>"
-            f"<p>这是一次性安装，之后所有 DWG 都会自动转换。</p>"
+            f"<p>本软件内置 LibreDWG WASM 转换器，但需要 Node.js 来执行。</p>"
+            f"<p><b>解决方案（选一）：</b></p>"
+            f"<ol>"
+            f"<li>安装 <a href='https://nodejs.org'>Node.js</a>（免费，40MB），之后所有 DWG 自动转换</li>"
+            f"<li>安装 <a href='{DWGConverter.DOWNLOAD_URL}'>ODA File Converter</a>（免费，50MB）</li>"
+            f"</ol>"
+            f"<p style='color:#888;'>均为一次安装，之后无需任何操作。</p>"
         )
         info.setWordWrap(True)
         layout.addWidget(info)
@@ -268,7 +305,7 @@ class MainWindow(QMainWindow):
             btn_try = QPushButton("重试转换")
             btn_try.clicked.connect(lambda: (
                 dlg.accept(),
-                QTimer.singleShot(100, lambda: self._do_dwg_convert(dwg_path)),
+                QTimer.singleShot(100, lambda: self._open_dwg(dwg_path)),
             ))
             btn_layout.addWidget(btn_try)
 
