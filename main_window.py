@@ -309,10 +309,11 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
 
         thicknesses = self._layer_panel.get_thicknesses()
+        z_offsets = self._layer_panel.get_z_offsets()
         enabled = self._layer_panel.get_enabled_layers()
 
         try:
-            meshes = self._builder.build(self._current_dxf, thicknesses, enabled)
+            meshes = self._builder.build(self._current_dxf, thicknesses, enabled, z_offsets)
             dlg.set_value(60)
             dlg.set_text("统计零件...")
             QApplication.processEvents()

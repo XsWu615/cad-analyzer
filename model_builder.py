@@ -18,7 +18,10 @@ class ModelBuilder:
         dxf_data: DXFData,
         layer_thicknesses: Dict[str, float],
         enabled_layers: List[str],
+        z_offsets: Dict[str, float] = None,
     ) -> Dict[str, trimesh.Trimesh]:
+        if z_offsets is None:
+            z_offsets = {}
         meshes = {}
         for layer in enabled_layers:
             if layer not in dxf_data.entities:
@@ -29,6 +32,9 @@ class ModelBuilder:
 
             mesh = self._build_layer(dxf_data.entities[layer], thickness)
             if mesh is not None:
+                z = z_offsets.get(layer, 0)
+                if z != 0:
+                    mesh.apply_translation([0, 0, z])
                 meshes[layer] = mesh
 
         return meshes
