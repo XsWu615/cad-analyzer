@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 /**
- * CLI wrapper: LibreDWG WASM dwg2dxf.
+ * DWG→DXF converter using @mlightcad/libredwg-web v0.7.7
  * Usage: node dwg2dxf_cli.mjs <input.dwg> <output.dxf>
+ *
+ * Bundled files: wasm_bundle/libredwg-web.wasm, wasm_bundle/libredwg-web.js
+ * Falls back to node_modules for development.
  */
 
 import fs from 'fs';
@@ -9,6 +12,21 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function findWasmFiles() {
+    // Try bundled path first (PyInstaller), then node_modules (dev)
+    const bundled = path.join(__dirname, 'wasm_bundle');
+    const npm = path.join(__dirname, 'node_modules', '@mlightcad', 'libredwg-web', 'wasm');
+
+    for (const base of [bundled, npm]) {
+        const wasm = path.join(base, 'libredwg-web.wasm');
+        const js = path.join(base, 'libredwg-web.js');
+        if (fs.existsSync(wasm) && fs.existsSync(js)) {
+            return { wasm, js };
+        }
+    }
+    throw new Error('WASM files not found. Reinstall with: npm install @mlightcad/libredwg-web');
+}
 
 async function main() {
     const args = process.argv.slice(2);
@@ -26,11 +44,13 @@ async function main() {
         process.exit(1);
     }
 
+    const { wasm: wasmPath, js: jsPath } = findWasmFiles();
     const dwgData = fs.readFileSync(inputAbs);
-    const wasmPath = path.join(__dirname, 'dwg2dxf.wasm');
     const wasmBinary = fs.readFileSync(wasmPath);
 
-    const createModule = (await import('./dwg2dxf_wasm.mjs')).default;
+    // Import WASM glue (file:// URL for Windows ESM compatibility)
+    const jsUrl = 'file:///' + path.resolve(jsPath).replace(/\\/g, '/');
+    const { default: createModule } = await import(jsUrl);
 
     const Module = await createModule({
         wasmBinary,
@@ -40,38 +60,18 @@ async function main() {
         printErr: () => {},
     });
 
-    // Write DWG to virtual FS
+    // Write DWG to virtual FS, call dwg_write_dxf (takes std::string)
     Module.FS.writeFile('/input.dwg', dwgData);
-
-    // Write C strings to HEAP at a safe region (after static data, before stack)
-    const HEAP = Module.HEAPU8;
-    const SAFE_OFFSET = 1024;  // past zero-init BSS region
-
-    function writeCStr(offset, str) {
-        const buf = Buffer.from(str + '\0', 'utf-8');
-        for (let i = 0; i < buf.length; i++) HEAP[offset + i] = buf[i];
-    }
-
-    const IN_OFFSET = SAFE_OFFSET;
-    const OUT_OFFSET = SAFE_OFFSET + 256;
-    writeCStr(IN_OFFSET, '/input.dwg');
-    writeCStr(OUT_OFFSET, '/output.dxf');
-
-    const rc = Module._dwg2dxf(IN_OFFSET, OUT_OFFSET);
+    const rc = Module.dwg_write_dxf('/input.dwg', '/output.dxf');
 
     if (rc !== 0) {
-        console.error('Conversion failed (code ' + rc + '). File may not be a valid DWG.');
+        console.error('Conversion failed (code ' + rc + '). DWG may be corrupted or unsupported.');
         process.exit(1);
     }
 
-    try {
-        const dxfData = Module.FS.readFile('/output.dxf', { encoding: 'binary' });
-        fs.writeFileSync(outputAbs, Buffer.from(dxfData));
-        console.log(outputAbs);
-    } catch (e) {
-        console.error('No output produced.');
-        process.exit(1);
-    }
+    const dxfData = Module.FS.readFile('/output.dxf', { encoding: 'binary' });
+    fs.writeFileSync(outputAbs, Buffer.from(dxfData));
+    console.log(outputAbs);
 }
 
 main().catch(err => {

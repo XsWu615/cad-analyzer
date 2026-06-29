@@ -27,8 +27,8 @@ a = Analysis(
         *mpl_datas,
         ('style.qss', '.'),
         ('icon.ico', '.'),
-        ('dwg2dxf.wasm', '.'),
-        ('dwg2dxf_wasm.mjs', '.'),
+        ('wasm_bundle/libredwg-web.wasm', 'wasm_bundle'),
+        ('wasm_bundle/libredwg-web.js', 'wasm_bundle'),
         ('dwg2dxf_cli.mjs', '.'),
     ],
     hiddenimports=[
