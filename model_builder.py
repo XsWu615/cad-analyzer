@@ -23,6 +23,9 @@ class ModelBuilder:
         if z_offsets is None:
             z_offsets = {}
         meshes = {}
+        # Normalize huge UTM coordinates to origin for proper 3D display
+        ox, oy = dxf_data.bounds[0], dxf_data.bounds[1]
+
         for layer in enabled_layers:
             if layer not in dxf_data.entities:
                 continue
@@ -33,8 +36,7 @@ class ModelBuilder:
             mesh = self._build_layer(dxf_data.entities[layer], thickness)
             if mesh is not None:
                 z = z_offsets.get(layer, 0)
-                if z != 0:
-                    mesh.apply_translation([0, 0, z])
+                mesh.apply_translation([-ox, -oy, z])
                 meshes[layer] = mesh
 
         return meshes

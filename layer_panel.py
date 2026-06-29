@@ -48,14 +48,18 @@ class LayerPanel(QWidget):
         layout.addLayout(btn_layout)
 
         # Z presets for building layers
-        z_group = QGroupBox("Z偏移快捷设置")
+        z_group = QGroupBox("Z 偏移快捷设置")
         z_layout = QHBoxLayout(z_group)
+        z_layout.setSpacing(3)
         for label, z in [("0m", 0), ("3m", 3000), ("6m", 6000),
                           ("9m", 9000), ("12m", 12000), ("-3m", -3000)]:
             btn = QPushButton(label)
-            btn.setMaximumWidth(45)
+            btn.setMinimumWidth(32)
+            btn.setMaximumWidth(42)
+            btn.setStyleSheet("QPushButton { padding: 3px 6px; font-size: 11px; }")
             btn.clicked.connect(lambda checked, z=z: self._set_all_z(z))
             z_layout.addWidget(btn)
+        z_layout.addStretch()
         layout.addWidget(z_group)
 
     def load(self, data: DXFData):
