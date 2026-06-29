@@ -111,7 +111,9 @@ class DXFPreviewWidget(QWidget):
                 self._ax.add_patch(ell)
             elif t in ('TEXT', 'MTEXT'):
                 insert = g.get('insert', (0, 0, 0))
-                text = g.get('text', '')[:20]
+                raw = g.get('text', '')[:20]
+                # Strip surrogate characters that crash matplotlib FT2Font
+                text = ''.join(c if ord(c) < 0xD800 or ord(c) > 0xDFFF else '?' for c in raw)
                 self._ax.text(insert[0], insert[1], text,
                             color='#aaa', fontsize=5, clip_on=True)
         except Exception:
