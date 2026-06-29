@@ -27,6 +27,9 @@ a = Analysis(
         *mpl_datas,
         ('style.qss', '.'),
         ('icon.ico', '.'),
+        ('dwg2dxf.wasm', '.'),
+        ('dwg2dxf_wasm.mjs', '.'),
+        ('dwg2dxf_cli.mjs', '.'),
     ],
     hiddenimports=[
         *vtk_hidden,
