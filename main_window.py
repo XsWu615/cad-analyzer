@@ -168,6 +168,14 @@ class MainWindow(QMainWindow):
     # ── add drawing ──────────────────────────────────────────────
 
     def _on_add_drawing(self):
+        try:
+            self._on_add_drawing_impl()
+        except Exception as e:
+            QMessageBox.critical(self, "操作失败", f"{e}\n\n{type(e).__name__}")
+            import traceback
+            traceback.print_exc()
+
+    def _on_add_drawing_impl(self):
         if not self._project_mgr.current_project:
             QMessageBox.warning(self, "提示", "请先新建或打开一个项目")
             return
