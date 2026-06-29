@@ -104,6 +104,7 @@ class DWGConverter:
                 [node_exe, cli_js, dwg_path, output_path],
                 capture_output=True, text=True, timeout=120,
                 cwd=wasm_dir, env=env,
+                creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == 'win32' else 0,
             )
             if result.returncode == 0 and os.path.isfile(output_path):
                 return output_path

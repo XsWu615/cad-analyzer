@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QMainWindow, QToolBar, QStatusBar, QFileDialog, QMessageBox,
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QLabel,
     QTreeWidget, QTreeWidgetItem, QMenu, QApplication, QInputDialog,
-    QProgressBar, QDialog,
 )
 from PySide6.QtCore import Qt, QSettings, QTimer, QThread, Signal, QObject
 from PySide6.QtGui import QAction, QKeySequence
@@ -23,6 +22,7 @@ from pdf_importer import PDFImporter
 from translator_util import TextTranslator
 from project_manager import ProjectManager, DrawingInfo
 from settings_dialog import SettingsDialog
+from progress_dialog import ProgressDialog
 
 
 class MainWindow(QMainWindow):
@@ -131,22 +131,13 @@ class MainWindow(QMainWindow):
     def _setup_statusbar(self):
         self._statusbar = QStatusBar()
         self.setStatusBar(self._statusbar)
-        self._progress_bar = QProgressBar()
-        self._progress_bar.setMaximumWidth(200)
-        self._progress_bar.setVisible(False)
         self._status_label = QLabel("就绪")
         self._statusbar.addWidget(self._status_label)
-        self._statusbar.addPermanentWidget(self._progress_bar)
 
     # ── status helper ────────────────────────────────────────────
 
-    def _status(self, msg, progress=-1):
+    def _status(self, msg):
         self._status_label.setText(msg)
-        if progress >= 0:
-            self._progress_bar.setVisible(True)
-            self._progress_bar.setValue(progress)
-        else:
-            self._progress_bar.setVisible(False)
         QApplication.processEvents()
 
     # ── project ──────────────────────────────────────────────────
@@ -198,10 +189,16 @@ class MainWindow(QMainWindow):
     # ── DXF import ───────────────────────────────────────────────
 
     def _import_dxf(self, dxf_path):
-        self._status("解析DXF中...", 0)
+        dlg = ProgressDialog(self, "解析DXF图纸")
+        dlg.set_text("读取文件中...")
+        dlg.show()
+        QApplication.processEvents()
+
         try:
             data = self._parser.parse(dxf_path)
-            self._status("解析完成", -1)
+            dlg.set_value(80)
+            dlg.set_text("加载预览...")
+            QApplication.processEvents()
 
             self._current_dxf = data
             self._dxf_preview.load(data)
@@ -216,53 +213,69 @@ class MainWindow(QMainWindow):
                 layer_count=len(data.layers),
             )
             self._refresh_tree()
+            dlg.set_value(100)
+            dlg.set_text("完成")
+            QApplication.processEvents()
+            dlg.accept()
+
             self._status(f"已加载: {di.name} | {di.layer_count}层, {di.entity_count}实体")
         except Exception as e:
+            dlg.accept()
             QMessageBox.critical(self, "解析失败", str(e))
             self._status("解析失败")
 
     # ── DWG import (background) ──────────────────────────────────
 
     def _import_dwg(self, dwg_path):
-        self._pending_dwg = dwg_path
-        self._status("DWG转换中...", 0)
+        self._dwg_progress = ProgressDialog(self, "DWG→DXF 转换")
+        self._dwg_progress.set_text("正在转换 DWG 文件...")
+        self._dwg_progress.show()
+        QApplication.processEvents()
 
+        self._pending_dwg = dwg_path
         self._worker = _DWGWorker(self._dwg_converter, dwg_path)
         self._th = QThread()
         self._worker.moveToThread(self._th)
         self._th.started.connect(self._worker.run)
         self._worker.done.connect(self._on_dwg_done)
         self._worker.done.connect(self._th.quit)
-        self._th.finished.connect(self._th.deleteLater)
         self._th.start()
 
     def _on_dwg_done(self, result):
-        self._status("转换完成", -1)
+        if hasattr(self, '_dwg_progress'):
+            self._dwg_progress.accept()
         if result is None or isinstance(result, Exception):
             QMessageBox.warning(self, "DWG转换失败",
                 f"自动转换未成功。\n\n请确保已安装 Node.js。\n错误: {result}")
             self._status("DWG转换失败")
             return
-        # result is DXF path
         self._import_dxf(result)
 
     # ── PDF import ───────────────────────────────────────────────
 
     def _import_pdf(self, pdf_path):
-        self._status("导入PDF矢量...", 0)
+        dlg = ProgressDialog(self, "导入PDF")
+        dlg.set_text("提取矢量图形...")
+        dlg.show()
+        QApplication.processEvents()
+
         try:
             pdf_data = self._pdf_importer.extract(pdf_path)
             if not pdf_data.layers or not any(
                 pdf_data.entities.get(ly) for ly in pdf_data.layers):
-                self._status("PDF无矢量数据")
+                dlg.accept()
                 QMessageBox.warning(self, "PDF无矢量数据",
                     "该PDF未检测到矢量线条，可能是扫描图片。")
+                self._status("PDF无矢量数据")
                 return
 
+            dlg.set_text("导出DXF...")
+            QApplication.processEvents()
             with tempfile.NamedTemporaryFile(suffix='.dxf', delete=False) as f:
                 tmp_dxf = f.name
             self._pdf_importer.export_dxf(pdf_data, tmp_dxf)
-            self._status("PDF导入完成", -1)
+            dlg.accept()
+
             self._import_dxf(tmp_dxf)
             self._translate_imported_text()
             try:
@@ -270,6 +283,7 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         except Exception as e:
+            dlg.accept()
             QMessageBox.critical(self, "PDF导入失败", str(e))
             self._status("PDF导入失败")
 
@@ -280,20 +294,35 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "提示", "请先加载图纸")
             return
 
-        self._status("生成3D模型...", 0)
+        dlg = ProgressDialog(self, "生成3D模型")
+        dlg.set_text("构建三维网格...")
+        dlg.show()
+        QApplication.processEvents()
+
         thicknesses = self._layer_panel.get_thicknesses()
         enabled = self._layer_panel.get_enabled_layers()
 
         try:
             meshes = self._builder.build(self._current_dxf, thicknesses, enabled)
+            dlg.set_value(60)
+            dlg.set_text("统计零件...")
+            QApplication.processEvents()
+
             self._layer_meshes = meshes
             self._gl_widget.load(meshes)
 
             stats = self._counter.count(self._current_dxf, meshes)
             self._stats_panel.load(stats)
+
+            dlg.set_value(100)
+            dlg.set_text("完成")
+            QApplication.processEvents()
+            dlg.accept()
+
             total = stats.get("component_count", 0)
             self._status(f"3D完成 | {len(meshes)}层, {total}个零件")
         except Exception as e:
+            dlg.accept()
             QMessageBox.critical(self, "3D生成失败", str(e))
             self._status("3D生成失败")
 
