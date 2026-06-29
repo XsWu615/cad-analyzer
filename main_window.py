@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout, QSplitter, QLabel, QDockWidget,
     QDialog, QDialogButtonBox, QPushButton,
 )
-from PySide6.QtCore import Qt, QSettings, QUrl
+from PySide6.QtCore import Qt, QSettings, QUrl, QTimer
 from PySide6.QtGui import QAction, QKeySequence, QDesktopServices
 
 from cad_parser import CADParser
@@ -16,6 +16,8 @@ from gl_widget import GLWidget
 from layer_panel import LayerPanel
 from stats_panel import StatsPanel
 from dwg_converter import DWGConverter
+from pdf_importer import PDFImporter
+from translator_util import TextTranslator
 
 
 class MainWindow(QMainWindow):
@@ -29,6 +31,8 @@ class MainWindow(QMainWindow):
         self._counter = PartCounter()
         self._exporter = Exporter()
         self._dwg_converter = DWGConverter()
+        self._pdf_importer = PDFImporter()
+        self._translator = TextTranslator()
 
         self._current_dxf = None
         self._layer_meshes = {}
@@ -42,7 +46,8 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
 
         file_menu = mb.addMenu("文件(&F)")
-        act_open = QAction("打开DXF(&O)...", self)
+
+        act_open = QAction("打开CAD/PDF(&O)...", self)
         act_open.setShortcut(QKeySequence.Open)
         act_open.triggered.connect(self._on_open)
         file_menu.addAction(act_open)
@@ -81,21 +86,21 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         self.addToolBar(Qt.TopToolBarArea, tb)
 
-        act_open = QAction("📂 打开DXF", self)
+        act_open = QAction("打开CAD/PDF", self)
         act_open.triggered.connect(self._on_open)
         tb.addAction(act_open)
 
-        act_build = QAction("🔧 生成3D", self)
+        act_build = QAction("生成3D", self)
         act_build.triggered.connect(self._on_build_3d)
         tb.addAction(act_build)
 
         tb.addSeparator()
 
-        act_export_3d = QAction("💾 导出模型", self)
+        act_export_3d = QAction("导出模型", self)
         act_export_3d.triggered.connect(self._on_export_3d)
         tb.addAction(act_export_3d)
 
-        act_export_stats = QAction("📊 导出报表", self)
+        act_export_stats = QAction("导出报表", self)
         act_export_stats.triggered.connect(self._on_export_stats)
         tb.addAction(act_export_stats)
 
@@ -107,16 +112,13 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter(Qt.Horizontal)
 
-        # Left: 2D preview
         self._dxf_preview = DXFPreviewWidget()
         splitter.addWidget(self._dxf_preview)
 
-        # Middle: layer panel
         self._layer_panel = LayerPanel()
         self._layer_panel.layer_changed.connect(self._on_layers_changed)
         splitter.addWidget(self._layer_panel)
 
-        # Right: 3D view + stats (vertical split)
         right_splitter = QSplitter(Qt.Vertical)
 
         self._gl_widget = GLWidget()
@@ -129,7 +131,6 @@ class MainWindow(QMainWindow):
         right_splitter.setStretchFactor(1, 1)
 
         splitter.addWidget(right_splitter)
-
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 4)
@@ -139,71 +140,141 @@ class MainWindow(QMainWindow):
     def _setup_statusbar(self):
         self._statusbar = QStatusBar()
         self.setStatusBar(self._statusbar)
-        self._status_label = QLabel("就绪 - 请打开DXF文件")
+        self._status_label = QLabel("就绪 - 支持 DXF / DWG / PDF")
         self._statusbar.addWidget(self._status_label)
 
     # --- slots ---
 
     def _on_open(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "打开CAD图纸", "",
-            "CAD Files (*.dxf *.dwg);;DXF Files (*.dxf);;DWG Files (*.dwg);;All Files (*.*)"
+            self, "打开CAD图纸或PDF", "",
+            "支持格式 (*.dxf *.dwg *.pdf);;DXF Files (*.dxf);;DWG Files (*.dwg);;PDF Files (*.pdf);;All Files (*.*)"
         )
         if not path:
             return
 
-        # DWG detection → guide user to convert first
-        if path.lower().endswith('.dwg'):
-            self._handle_dwg(path)
+        ext = path.lower()
+
+        if ext.endswith('.pdf'):
+            self._open_pdf(path)
             return
 
-        self._load_dxf(path)
+        if ext.endswith('.dwg'):
+            self._open_dwg(path)
+            return
 
-    def _handle_dwg(self, dwg_path):
-        """Show DWG guidance dialog with conversion options."""
+        if ext.endswith('.dxf'):
+            self._load_dxf(path)
+            return
+
+    def _open_pdf(self, pdf_path):
+        """Import PDF, translate text, convert to DXF for pipeline."""
+        try:
+            self._status_label.setText(f"导入PDF矢量图形: {pdf_path}")
+            QTimer.singleShot(50, lambda: self._do_pdf_import(pdf_path))
+        except Exception as e:
+            QMessageBox.critical(self, "PDF导入失败", str(e))
+
+    def _do_pdf_import(self, pdf_path):
+        try:
+            pdf_data = self._pdf_importer.extract(pdf_path)
+            if not pdf_data.layers or not any(
+                pdf_data.entities.get(ly) for ly in pdf_data.layers
+            ):
+                QMessageBox.warning(
+                    self, "PDF无矢量数据",
+                    "该PDF未检测到矢量线条。\n"
+                    "可能原因：\n"
+                    "  - PDF是扫描图片（非CAD导出）\n"
+                    "  - 矢量内容被栅格化\n\n"
+                    "请用CAD软件导出为DXF后再导入。"
+                )
+                self._status_label.setText("PDF无矢量数据")
+                return
+
+            # Export to temp DXF
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix='.dxf', delete=False) as f:
+                tmp_dxf = f.name
+            self._pdf_importer.export_dxf(pdf_data, tmp_dxf)
+
+            self._status_label.setText(
+                f"PDF已导入: {pdf_data.page_count}页, {len(pdf_data.layers)}层 - 翻译中..."
+            )
+
+            # Load into pipeline
+            self._load_dxf(tmp_dxf)
+
+            # Translate text annotations
+            self._translate_imported_text()
+
+            # cleanup temp
+            import os
+            try:
+                os.unlink(tmp_dxf)
+            except Exception:
+                pass
+
+            self._status_label.setText(
+                f"PDF已导入: {pdf_path} | 图层: {len(self._current_dxf.layers) if self._current_dxf else 0}"
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "PDF导入失败", str(e))
+            self._status_label.setText("PDF导入失败")
+
+    def _open_dwg(self, dwg_path):
+        """Try silent ODA conversion, fall back to guidance dialog."""
+        self._status_label.setText("检测DWG，尝试自动转换...")
+        QTimer.singleShot(50, lambda: self._do_dwg_convert(dwg_path))
+
+    def _do_dwg_convert(self, dwg_path):
+        # Try auto-convert via ODA
+        dxf_path = self._dwg_converter.auto_convert(dwg_path)
+        if dxf_path:
+            self._status_label.setText(f"DWG已自动转换为DXF: {dxf_path}")
+            self._load_dxf(dxf_path)
+            self._translate_imported_text()
+            return
+
+        # ODA not found — show guidance dialog
+        self._show_dwg_dialog(dwg_path)
+
+    def _show_dwg_dialog(self, dwg_path):
         dlg = QDialog(self)
-        dlg.setWindowTitle("DWG文件检测")
+        dlg.setWindowTitle("DWG转换 - 需要ODA File Converter")
         dlg.setMinimumWidth(520)
 
         layout = QVBoxLayout(dlg)
         layout.setSpacing(12)
 
         info = QLabel(
-            f"<h3>检测到 DWG 格式文件</h3>"
+            f"<h3>DWG 自动转换失败</h3>"
             f"<p><b>文件:</b> {dwg_path}</p>"
-            f"<p>DWG 是 AutoCAD 私有二进制格式，本软件无法直接解析。</p>"
-            f"<p><b>解决方案：</b>使用 Autodesk 官方免费的 "
-            f"<a href='https://www.opendesign.com/guestfiles/oda_file_converter'>ODA File Converter</a> "
-            f"将 DWG 转换为 DXF，再导入本软件。</p>"
-            f"<p style='color:#888;'>一次转换所有 DWG 文件，后续直接打开 DXF 即可。</p>"
+            f"<p>DWG 是 AutoCAD 私有格式。需要安装 ODA File Converter（免费）才能自动转换。</p>"
+            f"<p>这是一次性安装，之后所有 DWG 都会自动转换。</p>"
         )
         info.setWordWrap(True)
-        info.setOpenExternalLinks(True)
         layout.addWidget(info)
 
-        # ODAFileConverter detection
         oda_path = self._dwg_converter.find_oda_converter()
-        oda_label = QLabel()
         if oda_path:
-            oda_label.setText(f"ODAFileConverter 已检测到:<br><code>{oda_path}</code>")
+            oda_label = QLabel(f"已检测到: <code>{oda_path}</code>")
             oda_label.setStyleSheet("color: #4ecdc4;")
-        else:
-            oda_label.setText("未检测到 ODA File Converter 安装。\n请下载后安装，或将 DWG 文件用其他工具转为 DXF。")
-            oda_label.setStyleSheet("color: #ff6b6b;")
-        oda_label.setWordWrap(True)
-        layout.addWidget(oda_label)
+            layout.addWidget(oda_label)
 
-        # buttons
         btn_layout = QHBoxLayout()
 
         if oda_path:
-            btn_run = QPushButton("启动 ODA File Converter")
-            btn_run.clicked.connect(lambda: self._dwg_converter.launch_oda(oda_path))
-            btn_layout.addWidget(btn_run)
+            btn_try = QPushButton("重试转换")
+            btn_try.clicked.connect(lambda: (
+                dlg.accept(),
+                QTimer.singleShot(100, lambda: self._do_dwg_convert(dwg_path)),
+            ))
+            btn_layout.addWidget(btn_try)
 
-        btn_download = QPushButton("下载 ODA File Converter")
+        btn_download = QPushButton("下载 ODA File Converter (免费)")
         btn_download.clicked.connect(lambda: QDesktopServices.openUrl(
-            QUrl("https://www.opendesign.com/guestfiles/oda_file_converter")
+            QUrl(DWGConverter.DOWNLOAD_URL)
         ))
         btn_layout.addWidget(btn_download)
 
@@ -215,6 +286,7 @@ class MainWindow(QMainWindow):
 
         layout.addLayout(btn_layout)
         dlg.exec()
+        self._status_label.setText("DWG转换：请安装ODA File Converter后重试")
 
     def _load_dxf(self, path):
         try:
@@ -225,14 +297,38 @@ class MainWindow(QMainWindow):
             self._stats_panel.clear()
             self._gl_widget.clear()
             self._layer_meshes = {}
-            self._status_label.setText(f"已加载: {path} | 图层: {len(self._current_dxf.layers)}")
+            self._status_label.setText(
+                f"已加载: {path} | 图层: {len(self._current_dxf.layers)}"
+            )
         except Exception as e:
             QMessageBox.critical(self, "解析失败", str(e))
             self._status_label.setText("解析失败")
 
+    def _translate_imported_text(self):
+        """Translate non-Chinese TEXT/MTEXT entities in loaded DXF data."""
+        if self._current_dxf is None:
+            return
+
+        translated = 0
+        for layer, entities in self._current_dxf.entities.items():
+            for e in entities:
+                if e.dxftype in ('TEXT', 'MTEXT'):
+                    original = e.geometry.get('text', '')
+                    if original:
+                        new_text = self._translator.translate(original)
+                        if new_text != original:
+                            e.geometry['text'] = new_text
+                            translated += 1
+
+        if translated > 0:
+            self._dxf_preview.load(self._current_dxf)
+            self._status_label.setText(
+                f"{self._status_label.text()} | 已翻译 {translated} 处文本"
+            )
+
     def _on_build_3d(self):
         if self._current_dxf is None:
-            QMessageBox.warning(self, "提示", "请先打开DXF文件")
+            QMessageBox.warning(self, "提示", "请先打开DXF/PDF/DWG文件")
             return
 
         try:
@@ -246,9 +342,7 @@ class MainWindow(QMainWindow):
 
             self._gl_widget.load(self._layer_meshes)
 
-            stats = self._counter.count(
-                self._current_dxf, self._layer_meshes
-            )
+            stats = self._counter.count(self._current_dxf, self._layer_meshes)
             self._stats_panel.load(stats)
 
             total_parts = stats.get("component_count", 0)
@@ -285,7 +379,7 @@ class MainWindow(QMainWindow):
 
     def _on_export_stats(self):
         if self._current_dxf is None:
-            QMessageBox.warning(self, "提示", "请先打开DXF文件并生成3D")
+            QMessageBox.warning(self, "提示", "请先打开文件并生成3D")
             return
 
         path, _ = QFileDialog.getSaveFileName(
@@ -307,8 +401,9 @@ class MainWindow(QMainWindow):
     def _on_about(self):
         QMessageBox.about(
             self, "关于 CAD Analyzer",
-            "CAD Analyzer v1.0\n\n"
+            "CAD Analyzer v1.1\n\n"
             "CAD图纸分析 & 3D建模工具\n"
-            "支持DXF格式，图层挤出生成3D\n"
-            "零件自动统计与分类"
+            "支持: DXF / DWG(自动转换) / PDF(矢量导入)\n"
+            "图层挤出生成3D · 零件自动统计\n"
+            "非中文标注自动翻译"
         )
